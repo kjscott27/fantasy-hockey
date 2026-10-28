@@ -9,6 +9,7 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { loadConfig, PROJECT_ROOT, requireLeague } from "./config.ts";
 import { EspnClient } from "./espn/client.ts";
+import { RunError } from "./errors.ts";
 import { fetchFreeAgents, fetchLeague, type LeagueTeam, type Player, type RosterPlayer } from "./espn/league.ts";
 import { fetchProSchedule } from "./espn/proSchedule.ts";
 import { fetchStandings } from "./nhl/client.ts";
@@ -36,7 +37,7 @@ const swid = config.swid!.toUpperCase();
 const myTeam =
   league.teams.find((t) => t.id === config.teamId) ??
   league.teams.find((t) => t.owners.some((o) => o.toUpperCase() === swid));
-if (!myTeam) throw new Error("Couldn't find your team. Set ESPN_TEAM_ID in .env.");
+if (!myTeam) throw new RunError("TEAM_NOT_FOUND", "Couldn't find your team. Set ESPN_TEAM_ID in .env.");
 
 // ---- Schedule ----
 

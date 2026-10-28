@@ -1,4 +1,5 @@
 import type { Config } from "../config.ts";
+import { RunError } from "../errors.ts";
 
 const BASE_URL = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/fhl";
 
@@ -31,7 +32,7 @@ export class EspnClient {
 
   /** Your private league (requires espn_s2 + SWID cookies). */
   league<T>(req: EspnRequest = {}): Promise<T> {
-    if (!this.config.leagueId) throw new Error("ESPN_LEAGUE_ID is not set");
+    if (!this.config.leagueId) throw new RunError("CONFIG_MISSING", "ESPN_LEAGUE_ID is not set");
     return this.get(`seasons/${this.config.season}/segments/0/leagues/${this.config.leagueId}`, req);
   }
 
@@ -46,15 +47,29 @@ export class EspnClient {
     }
     if (req.filter !== undefined) headers["x-fantasy-filter"] = JSON.stringify(req.filter);
 
-    const res = await fetch(url, { method: "GET", headers });
+    // A timeout means a hung request fails the run instead of blocking every later one.
+    const res = await fetch(url, { method: "GET", headers, signal: AbortSignal.timeout(30_000) });
+    const details = { status: res.status, path: url.pathname };
     if (res.status === 401 || res.status === 403) {
-      throw new Error(`ESPN returned ${res.status} for ${url.pathname}. Check ESPN_S2/ESPN_SWID (cookies expire if you log out).`);
+      throw new RunError(
+        "ESPN_AUTH",
+        `ESPN returned ${res.status} for ${url.pathname}. Check ESPN_S2/ESPN_SWID (cookies expire if you log out).`,
+        details,
+      );
     }
-    if (!res.ok) throw new Error(`ESPN returned ${res.status} for ${url}`);
+    if (res.status === 404) throw new RunError("ESPN_NOT_FOUND", `ESPN returned 404 for ${url.pathname}`, details);
+    if (res.status === 429 || res.status >= 500) {
+      throw new RunError("ESPN_UNAVAILABLE", `ESPN returned ${res.status} for ${url.pathname}`, details);
+    }
+    if (!res.ok) throw new RunError("UNKNOWN", `ESPN returned ${res.status} for ${url}`, details);
 
     const contentType = res.headers.get("content-type") ?? "";
     if (!contentType.includes("json")) {
-      throw new Error(`ESPN returned non-JSON (${contentType}) for ${url.pathname}; usually means the cookies are invalid.`);
+      throw new RunError(
+        "ESPN_AUTH",
+        `ESPN returned non-JSON (${contentType}) for ${url.pathname}; usually means the cookies are invalid.`,
+        { ...details, contentType },
+      );
     }
     return (await res.json()) as T;
   }

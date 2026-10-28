@@ -2,17 +2,24 @@
   "name": "fantasy-hockey",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "snapshot": "tsx src/snapshot.ts",
     "report": "tsx src/report.ts",
     "probe": "tsx src/probe.ts",
     "week": "tsx src/weekCli.ts",
+    "scheduled": "tsx src/scheduled.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
+    "@types/nodemailer": "^8.0.2",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3"
+  },
+  "dependencies": {
+    "nodemailer": "^10.2.1"
   }
 }

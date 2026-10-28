@@ -1,3 +1,4 @@
+import { RunError } from "../errors.ts";
 import type { ProSchedule } from "../espn/proSchedule.ts";
 import { nhlAbbrev, type TeamStanding } from "../nhl/client.ts";
 
@@ -35,7 +36,9 @@ export function matchupWeek(
   currentPeriod: number,
 ): FantasyWeek {
   const scoringPeriods = matchupPeriods[String(matchupPeriodId)];
-  if (!scoringPeriods?.length) throw new Error(`Matchup period ${matchupPeriodId} not found in league settings`);
+  if (!scoringPeriods?.length) {
+    throw new RunError("ESPN_FORMAT", `Matchup period ${matchupPeriodId} not found in league settings`);
+  }
   const first = scoringPeriods[0];
   const last = scoringPeriods[scoringPeriods.length - 1];
   return {

@@ -1,3 +1,4 @@
+import { RunError } from "../errors.ts";
 import type { EspnClient } from "./client.ts";
 
 interface RawProGame {
@@ -87,7 +88,7 @@ export async function fetchProSchedule(espn: EspnClient): Promise<ProSchedule> {
   }
 
   const games = [...gamesById.values()].sort((a, b) => a.startUtc.localeCompare(b.startUtc));
-  if (games.length === 0) throw new Error("ESPN returned an empty NHL schedule");
+  if (games.length === 0) throw new RunError("ESPN_FORMAT", "ESPN returned an empty NHL schedule");
 
   // Anchor the period <-> date mapping on the first game, then sanity-check the rest.
   const anchor = games[0];
@@ -96,7 +97,10 @@ export async function fetchProSchedule(espn: EspnClient): Promise<ProSchedule> {
 
   const mismatch = games.find((g) => periodToDate(g.scoringPeriodId) !== g.date);
   if (mismatch) {
-    throw new Error(`Scoring period ${mismatch.scoringPeriodId} doesn't map to ${mismatch.date}; ESPN changed its schedule format`);
+    throw new RunError(
+      "ESPN_FORMAT",
+      `Scoring period ${mismatch.scoringPeriodId} doesn't map to ${mismatch.date}; ESPN changed its schedule format`,
+    );
   }
 
   return { teams, games, periodToDate, dateToPeriod };

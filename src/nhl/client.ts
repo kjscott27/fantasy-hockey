@@ -1,3 +1,5 @@
+import { RunError } from "../errors.ts";
+
 const NHL_API = "https://api-web.nhle.com/v1";
 
 /** ESPN abbreviations that differ from the NHL's. */
@@ -35,8 +37,8 @@ interface RawStanding {
 }
 
 async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${NHL_API}${path}`);
-  if (!res.ok) throw new Error(`NHL API returned ${res.status} for ${path}`);
+  const res = await fetch(`${NHL_API}${path}`, { signal: AbortSignal.timeout(30_000) });
+  if (!res.ok) throw new RunError("NHL_API", `NHL API returned ${res.status} for ${path}`, { status: res.status, path });
   return (await res.json()) as T;
 }
 

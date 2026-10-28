@@ -50,6 +50,7 @@ You should see your league name, scoring type, lineup slots and team name.
 | `npm run report` | Re-renders the HTML from `data/latest.json` without refetching | No |
 | `npm run week` | Games left per NHL team this week, with off nights and back-to-backs | No |
 | `npm run week -- --next` | The same for next week | No |
+| `npm run scheduled` | `snapshot`, then emails the result if [email notifications](#email-notifications) are set up. Used by cron on the Pi. `-- --print` previews the email; `-- --force` sends even if today's success email went out. | Yes |
 | `npm run probe` | Saves raw ESPN responses to `data/raw/` for debugging | Yes |
 | `npm run typecheck` | TypeScript check | No |
 
@@ -225,7 +226,8 @@ The report is a model built on box-score data. Check these yourself before actin
 | `ESPN_LEAGUE_ID is not set` | Create `.env` from `.env.example` and fill it in. |
 | `Couldn't find your team` | Set `ESPN_TEAM_ID` in `.env`. |
 | Numbers look stale | Rerun `npm run snapshot`. `npm run report` only re-renders the last snapshot. |
-| Pi report has a "may have failed" banner | Check `logs/snapshot.log` on the Pi. A 401/403 means the cookies expired. Update `.env` on the Pi. |
+| Pi report has a "may have failed" banner | Check your failure email, or `logs/snapshot.log` on the Pi. A 401/403 means the cookies expired. Update `.env` on the Pi. |
+| Projection seems off for one player | Check that player's row: a missing projection or a tiny sample (low GP) is the usual cause. |
 
 ## Self-hosting on a Raspberry Pi
 
@@ -268,10 +270,12 @@ time scripts/pi/run-snapshot.sh && tail logs/snapshot.log
 **5. Schedule it.** Run `crontab -e` and add this line to refresh on the hour from 9:00 to 21:00:
 
 ```
-0 9-21 * * * /home/<user>/fantasy-hockey/scripts/pi/run-snapshot.sh
+0 9-21 * * * $HOME/fantasy-hockey/scripts/pi/run-snapshot.sh
 ```
 
-`scripts/pi/run-snapshot.sh` logs each run to `logs/snapshot.log` and skips a run if the previous one is still going. If a run fails, the previous report stays in place and the page shows its age.
+Paste it as-is: cron expands `$HOME` to your home folder. Check it with `crontab -l`.
+
+`scripts/pi/run-snapshot.sh` runs `npm run scheduled`, logs each run to `logs/snapshot.log` and skips a run if the previous one is still going. If a run fails, the previous report stays in place and the page shows its age. Set up [email notifications](#email-notifications) to hear about failures straight away.
 
 **6. Serve it with Tailscale.**
 
@@ -283,20 +287,80 @@ sudo tailscale up
 In the [Tailscale admin console](https://login.tailscale.com/admin/dns), turn on **MagicDNS** and **HTTPS Certificates**. Then serve the reports folder in the background (this persists across reboots):
 
 ```sh
-sudo tailscale serve --bg /home/<user>/fantasy-hockey/reports
+sudo tailscale serve --bg $HOME/fantasy-hockey/reports
 tailscale serve status   # shows the URL
 ```
 
 **7. Open it on your phone.** Install the Tailscale app, sign in with the same account and leave it connected. Open `https://hockey-pi.<your-tailnet>.ts.net/latest.html` and add it to your home screen.
 
+**8. Optional: email notifications.** See [Email notifications](#email-notifications) below.
+
 **Moving to a new Pi** later: repeat the steps on the new Pi and give it the same hostname (remove the old machine in the Tailscale console first). Your bookmark keeps working.
-| Projection seems off for one player | Check that player's row: a missing projection or a tiny sample (low GP) is the usual cause. |
+
+### Email notifications
+
+Scheduled runs can email you:
+
+- **Every failure, straight away**, saying what went wrong, why and how to fix it, plus the technical details.
+- **One success email a day**, after the first good run, with the matchup score, today's lineup changes, alerts, the top 5 swaps and a link to the report. You also get one on the first good run after a failure.
+
+Emails are sent through Gmail from a **dedicated sender account** that you create just for this. The Pi has to store that account's App Password in `.env`. An App Password can send mail and read the whole inbox, but it can't change the account's password or settings. With a dedicated account, a leaked `.env` exposes an empty inbox instead of your real one.
+
+1. Create a new Gmail account, for example `yournamepinotifications@gmail.com`.
+2. On that account, turn on [2-Step Verification](https://myaccount.google.com/signinoptions/twosv). Google only allows App Passwords with 2-Step Verification on, and it no longer accepts a plain password for sending mail from scripts.
+3. Create an App Password at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) (name it "hockey pi"). Copy the 16 characters; you can't view them again.
+4. Add these to your `.env` (see `.env.example`):
+
+   ```sh
+   NOTIFY_GMAIL_USER=yournamepinotifications@gmail.com
+   NOTIFY_GMAIL_APP_PASSWORD=abcd efgh ijkl mnop
+   NOTIFY_EMAIL_TO=you@gmail.com
+   REPORT_URL=https://hockey-pi.<your-tailnet>.ts.net/latest.html
+   ```
+
+5. Copy `.env` to the Pi and lock down its permissions:
+
+   ```sh
+   scp .env <user>@hockey-pi:~/fantasy-hockey/.env
+   ssh <user>@hockey-pi 'chmod 600 ~/fantasy-hockey/.env'
+   ```
+
+6. On the Pi, preview the email, then send a real one:
+
+   ```sh
+   cd ~/fantasy-hockey
+   npm run scheduled -- --print   # prints the email, sends nothing
+   npm run scheduled -- --force   # sends it even if today's success email already went out
+   ```
+
+7. In your main Gmail, open the email and use **⋮ → Filter messages like this → Never send it to Spam**, so a failure email never lands in Spam.
+
+To turn emails off, blank out the `NOTIFY_*` values. To revoke access, delete the App Password at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords).
+
+Each failure email starts with a code:
+
+| Code | Meaning | Usual fix |
+| --- | --- | --- |
+| `ESPN_AUTH` | ESPN rejected the cookies | Copy fresh `espn_s2` and `SWID` into `.env` and `scp` it to the Pi |
+| `ESPN_UNAVAILABLE` | ESPN returned 429 or 5xx | None. The next run retries. |
+| `ESPN_NOT_FOUND` | ESPN returned 404 | Check `ESPN_LEAGUE_ID` and `ESPN_SEASON` |
+| `ESPN_FORMAT` | ESPN's data changed shape | The code needs updating. `npm run probe` saves raw responses. |
+| `NHL_API` | NHL standings request failed | None. The next run retries. |
+| `NETWORK` | The Pi couldn't reach the internet | Check the Pi's wifi |
+| `TIMEOUT` | A request took over 30 seconds | None if it's a one-off; otherwise check the wifi signal |
+| `CONFIG_MISSING` | A required `.env` value is blank | Fill it in |
+| `TEAM_NOT_FOUND` | Your team wasn't found in the league | Set `ESPN_TEAM_ID` |
+| `DISK` | Couldn't write the report | `df -h`: the card may be full or failing |
+| `UNKNOWN` | Anything else | The email includes the stack trace; see `logs/snapshot.log` |
+
+If the email itself can't be sent, the run exits with code 2 and `logs/snapshot.log` shows the Gmail error. `EAUTH` means the sender address or App Password is wrong. Emails can't be sent at all if Node can't start (for example, `npm` is missing). In that case the report's stale banner is the only warning.
 
 ## Project layout
 
 ```
 src/
   config.ts             .env loading
+  errors.ts             error codes and their explanations for failure emails
   espn/client.ts        GET-only ESPN client
   espn/league.ts        league, roster, matchup and free-agent parsing
   espn/proSchedule.ts   NHL schedule from ESPN, scoring period <-> date
@@ -307,6 +371,8 @@ src/
   analysis/lineup.ts    daily lineup optimizer
   analysis/suggest.ts   swaps, today's changes, alerts
   snapshot.ts           npm run snapshot
+  scheduled.ts          npm run scheduled: snapshot + email
+  notify/email.ts       success/failure emails, sent through Gmail
   snapshotTypes.ts      shape of data/latest.json
   report/template.ts    HTML report
   report.ts             npm run report
