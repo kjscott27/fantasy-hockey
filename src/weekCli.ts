@@ -17,7 +17,7 @@ const espn = new EspnClient(config);
 const [schedule, standings] = await Promise.all([fetchProSchedule(espn), fetchStandings()]);
 
 const today = schedule.dateToPeriod(toEasternDate(new Date()));
-const week = next ? calendarWeek(schedule, today + 7, today + 7) : calendarWeek(schedule, today);
+const week = next ? calendarWeek(schedule, today + 7, today) : calendarWeek(schedule, today);
 const { days, teams } = analyzeWeek(schedule, week, standings);
 
 const weekday = (date: string) => new Date(`${date}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" });
