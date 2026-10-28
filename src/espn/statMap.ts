@@ -37,8 +37,9 @@ export const STAT_NAMES: Record<number, string> = {
   25: "STAT_25", // unverified (~27 per game; possibly shifts)
   26: "TOI", // seconds
   27: "ATOI", // seconds per game
+  28: "HAT", // inferred: only ever 0/1 per player so far, and worth 2 pts in this league
   29: "SOG",
-  30: "GP_30", // unverified; equals games played in every sample
+  30: "GP_30", // unverified; equals games played in every sample (skaters and goalies)
   31: "HIT",
   32: "BLK",
   34: "GP",
