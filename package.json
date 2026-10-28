@@ -4,6 +4,8 @@
   "type": "module",
   "engines": { "node": ">=22" },
   "scripts": {
+    "snapshot": "tsx src/snapshot.ts",
+    "report": "tsx src/report.ts",
     "probe": "tsx src/probe.ts",
     "week": "tsx src/weekCli.ts",
     "typecheck": "tsc --noEmit"
