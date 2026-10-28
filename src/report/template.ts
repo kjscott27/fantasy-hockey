@@ -306,11 +306,13 @@ table.grid .played { opacity: .45; }
 table.grid tr.mine td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 table.grid tr.mine { background: var(--mine); }
 details summary { cursor: pointer; color: var(--muted); }
+.stale { background: var(--warn-soft); color: var(--warn); border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; font-weight: 550; }
 footer { color: var(--muted); font-size: 12px; margin-top: 24px; }
 </style>
 </head>
 <body>
-<main>
+<main data-generated="${esc(s.generatedAt)}">
+  <div class="stale" id="stale" hidden></div>
   <h1>${esc(s.myTeam.name)}</h1>
   <p class="sub">${esc(s.league.name)} · ${esc(s.week.label)} · Generated ${new Date(s.generatedAt).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}</p>
 
@@ -372,6 +374,17 @@ footer { color: var(--muted); font-size: 12px; margin-top: 24px; }
   <footer>Suggestions only. Make all roster moves yourself on ESPN.</footer>
 </main>
 <script>
+// Hourly refreshes run during the day. If this page is older than that, a refresh failed
+// (often expired ESPN cookies) or it's outside the refresh window.
+(() => {
+  const generated = Date.parse(document.querySelector("main").dataset.generated);
+  const hours = (Date.now() - generated) / 3_600_000;
+  if (!(hours > 1.5)) return;
+  const banner = document.getElementById("stale");
+  const age = hours < 48 ? Math.floor(hours) + " hours" : Math.floor(hours / 24) + " days";
+  banner.textContent = "This report is " + age + " old. The last refresh may have failed; projections and lineup advice may be out of date.";
+  banner.hidden = false;
+})();
 document.querySelectorAll("table.sortable").forEach((table) => {
   table.querySelectorAll("thead th").forEach((th, col) => {
     th.addEventListener("click", () => {

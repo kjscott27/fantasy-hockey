@@ -67,7 +67,14 @@ export interface PlanPlayer {
   perTeamGame: number;
   /** First scoring period the player can be used (e.g. after a waiver claim clears). */
   availableFrom?: number;
+  /** Current ESPN lineup slot, which a player keeps once their game has started. */
+  currentSlot?: string;
 }
+
+/** True once a team's game in that scoring period has started (lineups lock per game). */
+export type StartedFn = (proTeamId: number, period: number) => boolean;
+
+const isActiveSlot = (slot: string | undefined) => slot !== undefined && slot !== "BN" && slot !== "IR";
 
 export interface DayPlan {
   period: number;
@@ -88,12 +95,24 @@ export function planWeek(
   days: { period: number; date: string }[],
   playsOn: (proTeamId: number, period: number) => boolean,
   slotCounts: SlotCounts,
+  started: StartedFn = () => false,
 ): WeekPlan {
   const plans = days.map(({ period, date }) => {
-    const playing = players.filter((p) => playsOn(p.proTeamId, period) && (p.availableFrom ?? 0) <= period);
+    // Players whose game has started are locked where they are and have no points left
+    // to add (anything they scored is already in the live score). Locked starters keep
+    // their slot, so only the remaining slots are open to everyone else.
+    const open: SlotCounts = { ...slotCounts };
+    for (const p of players) {
+      if (started(p.proTeamId, period) && isActiveSlot(p.currentSlot) && open[p.currentSlot!] !== undefined) {
+        open[p.currentSlot!] = Math.max(0, open[p.currentSlot!] - 1);
+      }
+    }
+    const playing = players.filter(
+      (p) => playsOn(p.proTeamId, period) && !started(p.proTeamId, period) && (p.availableFrom ?? 0) <= period,
+    );
     const lineup = optimizeLineup(
       playing.map((p) => ({ id: p.id, eligible: p.eligible, value: p.perTeamGame })),
-      slotCounts,
+      open,
     );
     return {
       period,

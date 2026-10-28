@@ -11,6 +11,7 @@ It **never makes moves**. Every ESPN request is a hard-coded `GET`, and no code 
 - [How the numbers are calculated](#how-the-numbers-are-calculated)
 - [What the tool can't see](#what-the-tool-cant-see)
 - [Troubleshooting](#troubleshooting)
+- [Self-hosting on a Raspberry Pi](#self-hosting-on-a-raspberry-pi)
 - [Project layout](#project-layout)
 
 ## Setup
@@ -101,7 +102,9 @@ Solid bars are points scored so far; faded bars are projected points still to co
   - an injured player on your bench while an IR slot is open
   - day-to-day players to check before lineups lock
 
-Lineups lock at each game's start time, so a suggestion only works if that player's game hasn't started.
+Lineups lock at each game's start time. Players whose game has already started are never suggested, because they can't be moved.
+
+If the report is more than 90 minutes old when you open it, a yellow banner at the top says so. On a scheduled setup this usually means a refresh failed, for example because the ESPN cookies expired.
 
 ### Suggested swaps
 
@@ -185,6 +188,8 @@ Adjustments:
 
 For each remaining day the tool takes the players whose NHL team plays and finds the highest-scoring legal lineup for your league's slots, using each player's eligible positions. Adding up the days gives the rest-of-week projection. Comparing today's best lineup with your current one gives the **Today** suggestions.
 
+Once a game starts, its players are locked. Their points from that game are already in ESPN's live score, so they add nothing more to the projection. A locked player in an active slot keeps that slot, and the rest of today's lineup is planned around them.
+
 ### 4. Matchup projection
 
 Projected final = current score + rest-of-week projection, for both you and your opponent.
@@ -208,7 +213,7 @@ The report is a model built on box-score data. Check these yourself before actin
 - **News**: line promotions, power-play changes, a goalie losing the net, or an injury ESPN hasn't flagged yet. A sudden drop in L15 (such as a goalie at 0.0) usually has a reason the numbers can't explain.
 - **Tonight's goalie starters**: the model uses each goalie's usual share of starts. Check confirmed starters, because wins and shutouts are worth a lot.
 - **Small samples**: early in the season a few big games can inflate a player's value.
-- **Timing**: today's games count as still to play. If you run a snapshot after games have started, points already scored are counted again in the projection. Rerun before deciding.
+- **Timing**: games that have started are left out of the projection, but a snapshot is only as current as when it ran. Rerun before deciding.
 - **Out of scope**: trades, waiver priority, and players returning from IR who would push you over a position limit.
 - **Free-agent pool**: only the top 150 free agents by percent owned are considered.
 
@@ -220,6 +225,71 @@ The report is a model built on box-score data. Check these yourself before actin
 | `ESPN_LEAGUE_ID is not set` | Create `.env` from `.env.example` and fill it in. |
 | `Couldn't find your team` | Set `ESPN_TEAM_ID` in `.env`. |
 | Numbers look stale | Rerun `npm run snapshot`. `npm run report` only re-renders the last snapshot. |
+| Pi report has a "may have failed" banner | Check `logs/snapshot.log` on the Pi. A 401/403 means the cookies expired. Update `.env` on the Pi. |
+
+## Self-hosting on a Raspberry Pi
+
+A Pi at home can refresh the report every hour and serve it to your phone from anywhere. These steps work on a Pi 3, 4 or 5. On a Pi 4 or 5, booting from a USB SSD is more reliable than an SD card.
+
+Remote access uses [Tailscale](https://tailscale.com), a free private network between your own devices. The report gets an HTTPS address that only your devices can open. Nothing is exposed to the internet and you don't need to change any router settings.
+
+**1. Install the OS.** With Raspberry Pi Imager, flash **Raspberry Pi OS Lite (64-bit)**. In Imager's settings, set a hostname (for example `hockey-pi`), a username, your wifi and SSH access. Boot the Pi and `ssh <user>@hockey-pi.local`.
+
+**2. Set the timezone.** Cron's hours and the report's "Generated" time both use it.
+
+```sh
+sudo timedatectl set-timezone America/Toronto   # your zone; list them with: timedatectl list-timezones
+```
+
+**3. Install Node 22** from NodeSource, so `node` and `npm` are in `/usr/bin`, where cron can find them:
+
+```sh
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt-get install -y nodejs git
+node -v
+```
+
+**4. Get the code and your `.env`.** Clone the repo (or `rsync` it from your computer), install, then copy `.env` over from your computer:
+
+```sh
+git clone git@github.com:kjscott27/fantasy-hockey.git ~/fantasy-hockey
+cd ~/fantasy-hockey && npm ci
+# on your computer:
+scp .env <user>@hockey-pi.local:~/fantasy-hockey/.env
+```
+
+Check it works, and see how long a run takes:
+
+```sh
+npm run probe
+time scripts/pi/run-snapshot.sh && tail logs/snapshot.log
+```
+
+**5. Schedule it.** Run `crontab -e` and add this line to refresh on the hour from 9:00 to 21:00:
+
+```
+0 9-21 * * * /home/<user>/fantasy-hockey/scripts/pi/run-snapshot.sh
+```
+
+`scripts/pi/run-snapshot.sh` logs each run to `logs/snapshot.log` and skips a run if the previous one is still going. If a run fails, the previous report stays in place and the page shows its age.
+
+**6. Serve it with Tailscale.**
+
+```sh
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+```
+
+In the [Tailscale admin console](https://login.tailscale.com/admin/dns), turn on **MagicDNS** and **HTTPS Certificates**. Then serve the reports folder in the background (this persists across reboots):
+
+```sh
+sudo tailscale serve --bg /home/<user>/fantasy-hockey/reports
+tailscale serve status   # shows the URL
+```
+
+**7. Open it on your phone.** Install the Tailscale app, sign in with the same account and leave it connected. Open `https://hockey-pi.<your-tailnet>.ts.net/latest.html` and add it to your home screen.
+
+**Moving to a new Pi** later: repeat the steps on the new Pi and give it the same hostname (remove the old machine in the Tailscale console first). Your bookmark keeps working.
 | Projection seems off for one player | Check that player's row: a missing projection or a tiny sample (low GP) is the usual cause. |
 
 ## Project layout
@@ -242,6 +312,8 @@ src/
   report.ts             npm run report
   weekCli.ts            npm run week
   probe.ts              npm run probe
+scripts/pi/
+  run-snapshot.sh       cron wrapper for scheduled snapshots on a Pi
 ```
 
 `data/latest.json` contains everything in the report in machine-readable form, useful for your own analysis or scripts.

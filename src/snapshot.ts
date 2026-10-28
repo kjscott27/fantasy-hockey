@@ -5,7 +5,7 @@
  *
  *   npm run snapshot
  */
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { loadConfig, PROJECT_ROOT, requireLeague } from "./config.ts";
 import { EspnClient } from "./espn/client.ts";
@@ -22,6 +22,7 @@ import type { Snapshot, SnapshotDay, SnapshotPlayer, SnapshotTeam } from "./snap
 const config = requireLeague(loadConfig());
 const espn = new EspnClient(config);
 
+const now = new Date();
 console.log("Fetching league, NHL schedule and standings...");
 const [league, schedule, standings] = await Promise.all([
   fetchLeague(espn, config.season),
@@ -41,11 +42,18 @@ if (!myTeam) throw new Error("Couldn't find your team. Set ESPN_TEAM_ID in .env.
 
 const week = calendarWeek(schedule, today);
 const nextWeek = calendarWeek(schedule, today + 7, today);
-const thisWeekAnalysis = analyzeWeek(schedule, week, standings);
-const nextWeekAnalysis = analyzeWeek(schedule, nextWeek, standings);
+const thisWeekAnalysis = analyzeWeek(schedule, week, standings, now);
+const nextWeekAnalysis = analyzeWeek(schedule, nextWeek, standings, now);
 
 const teamPeriods = new Set(schedule.games.flatMap((g) => [`${g.homeId}:${g.scoringPeriodId}`, `${g.awayId}:${g.scoringPeriodId}`]));
 const playsOn = (teamId: number, period: number) => teamPeriods.has(`${teamId}:${period}`);
+
+// Games that have already started. Those players are locked and their points are in the live score.
+const startedGames = schedule.games.filter((g) => Date.parse(g.startUtc) <= now.getTime());
+const startedPeriods = new Set(startedGames.flatMap((g) => [`${g.homeId}:${g.scoringPeriodId}`, `${g.awayId}:${g.scoringPeriodId}`]));
+const started = (teamId: number, period: number) => startedPeriods.has(`${teamId}:${period}`);
+const todayGames = schedule.games.filter((g) => g.scoringPeriodId === today);
+const todayStarted = todayGames.filter((g) => Date.parse(g.startUtc) <= now.getTime()).length;
 
 const teamGamesPlayed = new Map<number, number>();
 const teamSeasonGames = new Map<number, number>();
@@ -74,6 +82,7 @@ const ctx: PlanningContext = {
   slots: league.settings.lineupSlots,
   positionLimits: league.settings.positionLimits,
   playsOn,
+  started,
   thisWeekDays: days(thisWeekAnalysis, true),
   nextWeekDays: days(nextWeekAnalysis, false),
   today,
@@ -85,6 +94,7 @@ const planFor = (team: LeagueTeam): WeekPlan =>
     ctx.thisWeekDays,
     playsOn,
     ctx.slots,
+    started,
   );
 const myPlan = planFor(myTeam);
 
@@ -103,7 +113,7 @@ const opponentPlan = opponentTeam ? planFor(opponentTeam) : null;
 
 console.log("Evaluating swaps...");
 const swaps = suggestSwaps(myTeam.roster, freeAgents, values, ctx, acquisitionsRemaining);
-const changes = todayChanges(myTeam.roster, myPlan.days.find((d) => d.period === today));
+const changes = todayChanges(myTeam.roster, myPlan.days.find((d) => d.period === today), (p) => started(p.proTeamId, today));
 const alerts = rosterAlerts(myTeam.roster, values, league.settings.irSlots);
 
 // ---- Serialize ----
@@ -166,14 +176,16 @@ const notes = [
   "Points per game blend ESPN's season projection (35%), this season (25%), last 15 days (25%) and last 7 days (15%), each down-weighted until it has enough games.",
   "Goalie values are multiplied by their expected share of team starts.",
   "Day-to-day players are discounted 25%; OUT, IR and suspended players count as zero.",
-  "Today's games count as remaining. If some have already started, projections overlap points already scored.",
+  todayStarted > 0
+    ? `${todayStarted} of today's ${todayGames.length} games had started when this ran. Those players are locked: their points are already in the live score, so they're left out of the remaining projection and the Today suggestions.`
+    : "None of today's games had started when this ran, so every game today counts as remaining.",
   "Free agents are assumed usable from tomorrow and waiver claims from the day after.",
   "Swap gains are lineup-optimized points over the rest of this week plus all of next week.",
 ];
 if (acquisitionsRemaining === 0) notes.push("No adds left this matchup, so swap gains only count next week.");
 
 const snapshot: Snapshot = {
-  generatedAt: new Date().toISOString(),
+  generatedAt: now.toISOString(),
   league: {
     id: config.leagueId,
     name: league.settings.name,
@@ -261,7 +273,10 @@ await mkdir(dataDir, { recursive: true });
 await mkdir(reportsDir, { recursive: true });
 await writeFile(path.join(dataDir, `snapshot-${snapshot.week.today}.json`), json);
 await writeFile(path.join(dataDir, "latest.json"), json);
-await writeFile(path.join(reportsDir, "latest.html"), renderReport(JSON.parse(json) as Snapshot));
+// Write then rename so a web server serving reports/ never sees a half-written page.
+const reportPath = path.join(reportsDir, "latest.html");
+await writeFile(`${reportPath}.tmp`, renderReport(JSON.parse(json) as Snapshot));
+await rename(`${reportPath}.tmp`, reportPath);
 
 // ---- Console summary ----
 

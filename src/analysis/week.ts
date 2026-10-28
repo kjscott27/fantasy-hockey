@@ -87,7 +87,9 @@ export function analyzeWeek(
   schedule: ProSchedule,
   week: FantasyWeek,
   standings?: Map<string, TeamStanding>,
+  now = new Date(),
 ): WeekAnalysis {
+  const nowIso = now.toISOString();
   const periods = new Set(week.scoringPeriods);
   const weekGames = schedule.games.filter((g) => periods.has(g.scoringPeriodId));
 
@@ -121,7 +123,8 @@ export function analyzeWeek(
           opponent,
           home: g.homeId === team.id,
           offNight: day.offNight,
-          remaining: day.remaining,
+          // A game that has started is locked: its points are already in the live score.
+          remaining: day.remaining && g.startUtc > nowIso,
           opponentGaPerGame: standing?.goalsAgainstPerGame ?? null,
           opponentGfPerGame: standing?.goalsForPerGame ?? null,
         };

@@ -1,5 +1,5 @@
 import type { Player, RosterPlayer } from "../espn/league.ts";
-import { planWeek, type DayPlan, type PlanPlayer, type SlotCounts } from "./lineup.ts";
+import { planWeek, type DayPlan, type PlanPlayer, type SlotCounts, type StartedFn } from "./lineup.ts";
 import type { Valuation } from "./value.ts";
 
 export interface PlanningContext {
@@ -7,14 +7,16 @@ export interface PlanningContext {
   /** Max rostered (non-IR) players per position, e.g. { G: 3 }. */
   positionLimits: Record<string, number>;
   playsOn: (proTeamId: number, period: number) => boolean;
+  started: StartedFn;
   /** Days of this matchup week not yet played (today included). */
   thisWeekDays: { period: number; date: string }[];
   nextWeekDays: { period: number; date: string }[];
   today: number;
 }
 
-export function toPlanPlayer(p: Player, v: Valuation, availableFrom?: number): PlanPlayer {
-  return { id: p.id, eligible: p.eligible, proTeamId: p.proTeamId, perTeamGame: v.perTeamGame, availableFrom };
+export function toPlanPlayer(p: Player | RosterPlayer, v: Valuation, availableFrom?: number): PlanPlayer {
+  const currentSlot = "lineupSlot" in p ? p.lineupSlot : undefined;
+  return { id: p.id, eligible: p.eligible, proTeamId: p.proTeamId, perTeamGame: v.perTeamGame, availableFrom, currentSlot };
 }
 
 /** Rest-of-season value per team game, ignoring short-term injury. */
@@ -57,8 +59,8 @@ export function suggestSwaps(
   const canAddThisWeek = acquisitionsRemaining === null || acquisitionsRemaining > 0;
   const nextWeekStart = ctx.nextWeekDays[0]?.period ?? ctx.today + 7;
 
-  const thisWeek = (players: PlanPlayer[]) => planWeek(players, ctx.thisWeekDays, ctx.playsOn, ctx.slots).total;
-  const nextWeek = (players: PlanPlayer[]) => planWeek(players, ctx.nextWeekDays, ctx.playsOn, ctx.slots).total;
+  const thisWeek = (players: PlanPlayer[]) => planWeek(players, ctx.thisWeekDays, ctx.playsOn, ctx.slots, ctx.started).total;
+  const nextWeek = (players: PlanPlayer[]) => planWeek(players, ctx.nextWeekDays, ctx.playsOn, ctx.slots, ctx.started).total;
   const baseThis = thisWeek(basePlayers);
   const baseNext = nextWeek(basePlayers);
 
@@ -117,8 +119,15 @@ export interface LineupChange {
   slot: string | null;
 }
 
-/** Differences between the current lineup and today's optimal lineup. */
-export function todayChanges(roster: RosterPlayer[], today: DayPlan | undefined): LineupChange[] {
+/**
+ * Differences between the current lineup and today's optimal lineup. Players whose game
+ * has already started are locked, so they're never suggested.
+ */
+export function todayChanges(
+  roster: RosterPlayer[],
+  today: DayPlan | undefined,
+  locked: (p: RosterPlayer) => boolean = () => false,
+): LineupChange[] {
   if (!today) return [];
   const optimal = new Map(today.starters.map((s) => [s.id, s.slot]));
   const isActive = (p: RosterPlayer) => p.lineupSlot !== "BN" && p.lineupSlot !== "IR";
@@ -132,7 +141,7 @@ export function todayChanges(roster: RosterPlayer[], today: DayPlan | undefined)
   const neededSlots = new Map<string, number>();
   for (const s of starts) neededSlots.set(s.slot!, (neededSlots.get(s.slot!) ?? 0) + 1);
   const benches = roster
-    .filter((p) => isActive(p) && !optimal.has(p.id) && (neededSlots.get(p.lineupSlot) ?? 0) > 0)
+    .filter((p) => isActive(p) && !locked(p) && !optimal.has(p.id) && (neededSlots.get(p.lineupSlot) ?? 0) > 0)
     .map((p): LineupChange => {
       neededSlots.set(p.lineupSlot, neededSlots.get(p.lineupSlot)! - 1);
       return { action: "bench", id: p.id, slot: p.lineupSlot };
