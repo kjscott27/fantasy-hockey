@@ -31,6 +31,7 @@ Fill in `.env`:
 | `ESPN_TEAM_ID` | Optional. `teamId=` in the same URL. Detected from your SWID if blank. |
 | `ESPN_SEASON` | The year the season ends (2026–27 = `2027`) |
 | `ESPN_S2`, `ESPN_SWID` | On fantasy.espn.com while logged in: DevTools → Application → Cookies → `https://fantasy.espn.com`. Copy both values. Keep the curly braces on SWID. |
+| `NOTIFY_*`, `REPORT_URL` | Optional. Only for emails from scheduled runs; see [Email notifications](#email-notifications). |
 
 These cookies give access to your ESPN account. `.env` is git-ignored, so keep it that way and never paste the values anywhere public.
 
@@ -66,7 +67,7 @@ The snapshot takes a few seconds. Snapshots and reports stay on your machine (`d
 
 **Every day, before the first game (around 6 pm ET)**
 
-1. Run `npm run snapshot` and open the report.
+1. Run `npm run snapshot` and open the report. If you [self-host on a Pi](#self-hosting-on-a-raspberry-pi), just open the report on your phone; it refreshes every hour.
 2. Read the **Today** card. If it says to start or bench someone, make that change on ESPN.
 3. Read any alerts, such as an injured player in your lineup or a healthy player stuck on IR.
 
@@ -227,6 +228,8 @@ The report is a model built on box-score data. Check these yourself before actin
 | `Couldn't find your team` | Set `ESPN_TEAM_ID` in `.env`. |
 | Numbers look stale | Rerun `npm run snapshot`. `npm run report` only re-renders the last snapshot. |
 | Pi report has a "may have failed" banner | Check your failure email, or `logs/snapshot.log` on the Pi. A 401/403 means the cookies expired. Update `.env` on the Pi. |
+| `ssh <user>@<pi>.local` hangs | Your computer can't resolve the `.local` name. Use the Pi's IP from your router's device list, or its Tailscale name. |
+| Cron didn't run at the expected hour | On the Pi, `crontab -l` should show `$HOME/fantasy-hockey/...` or your real home folder, not a `<user>` placeholder. `journalctl -u cron --since today` shows what cron ran. `timedatectl` shows the timezone cron uses. |
 | Projection seems off for one player | Check that player's row: a missing projection or a tiny sample (low GP) is the usual cause. |
 
 ## Self-hosting on a Raspberry Pi
@@ -236,6 +239,8 @@ A Pi at home can refresh the report every hour and serve it to your phone from a
 Remote access uses [Tailscale](https://tailscale.com), a free private network between your own devices. The report gets an HTTPS address that only your devices can open. Nothing is exposed to the internet and you don't need to change any router settings.
 
 **1. Install the OS.** With Raspberry Pi Imager, flash **Raspberry Pi OS Lite (64-bit)**. In Imager's settings, set a hostname (for example `hockey-pi`), a username, your wifi and SSH access. Boot the Pi and `ssh <user>@hockey-pi.local`.
+
+If `ssh` just hangs, your computer can't resolve the `.local` name. Find the Pi's IP address in your router's device list and use that instead (`ssh <user>@192.168.x.x`). Reserve that IP for the Pi in the router so it doesn't change. Once Tailscale is set up (step 6), `ssh <user>@hockey-pi` works from anywhere.
 
 **2. Set the timezone.** Cron's hours and the report's "Generated" time both use it.
 
@@ -354,6 +359,17 @@ Each failure email starts with a code:
 | `UNKNOWN` | Anything else | The email includes the stack trace; see `logs/snapshot.log` |
 
 If the email itself can't be sent, the run exits with code 2 and `logs/snapshot.log` shows the Gmail error. `EAUTH` means the sender address or App Password is wrong. Emails can't be sent at all if Node can't start (for example, `npm` is missing). In that case the report's stale banner is the only warning.
+
+### Keeping it secure
+
+Nothing is exposed to the internet, but the Pi holds your ESPN cookies (which can make roster moves) and possibly an App Password. Worth doing once:
+
+- **Keep the report private.** `tailscale serve status` should say *(tailnet only)*. Never turn on `tailscale funnel`, which would make it public. If it's ever on, `tailscale funnel reset` turns it off.
+- **Disable key expiry** for the Pi in the [Tailscale admin console](https://login.tailscale.com/admin/machines) (⋯ → Disable key expiry). Otherwise the Pi drops off your tailnet after about 180 days and the URL stops working.
+- **Lock down `.env`** with `chmod 600 ~/fantasy-hockey/.env`, and never commit it. It's git-ignored, but run `git status` before committing anyway.
+- **Protect the Pi's login.** Use a strong password, or SSH keys with password login turned off. Turn on two-factor authentication for the account you sign in to Tailscale with, because anyone with that account can reach the Pi.
+- **Keep the Pi updated.** Run `sudo apt update && sudo apt full-upgrade -y` every month or so, or install `unattended-upgrades` to apply security updates automatically.
+- **Shut down cleanly** before unplugging, to avoid corrupting the SD card: `sudo shutdown -h now`, then wait for the green light to stop. Cron, Tailscale and `tailscale serve` all start again on boot.
 
 ## Project layout
 
